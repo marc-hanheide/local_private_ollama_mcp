@@ -1,0 +1,4 @@
+mcp>=1.2,<2
+httpx
+pypdf
+python-docx
