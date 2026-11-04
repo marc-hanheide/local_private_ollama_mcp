@@ -110,6 +110,19 @@ The server tells Claude on connection that the local model is much weaker than C
 
 Claude passes the section's range as `char_range`, so the local model reads only that part. That is faster and much more accurate than processing a whole long document.
 
+## Companion skill
+
+[`skills/private-document-review/SKILL.md`](skills/private-document-review/SKILL.md) teaches Claude to use this server whenever you ask it to assess, review, summarise or answer questions about a document that must not go to a cloud provider. It sets hard rules (never open the document or the output notes with other tools, no cloud fallback, a check on funder peer-review rules), the section-by-section workflow above, how to phrase tasks for a small model, and how to report results.
+
+- **Claude Code:** copy the folder into your skills directory:
+  ```bash
+  mkdir -p ~/.claude/skills
+  cp -r skills/private-document-review ~/.claude/skills/
+  ```
+- **Claude apps:** add it as a custom skill, for example by uploading the `private-document-review` folder as a zip.
+
+A test checks that the skill mentions every tool the server offers and no tools it doesn't, so the two stay in sync.
+
 ## Tools
 
 | Tool | Returns to Claude |
