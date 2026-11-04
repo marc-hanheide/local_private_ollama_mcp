@@ -1,6 +1,12 @@
-# local-llm-mcp
+# local_private_ollama_mcp
 
 A narrow MCP server that lets Claude Desktop ask your local Ollama model (qwen3:14b) about documents, without the document text passing through Claude.
+
+## Supported documents
+
+Only **PDF** (`.pdf`), **markdown** (`.md`, `.markdown`) and **plain text** (`.txt`) files in `DOC_ROOT` are accepted; anything else is rejected and not listed.
+
+PDFs are converted to markdown locally with [markitdown](https://github.com/microsoft/markitdown), so headings, lists and tables reach the local model in a readable structure. Conversion runs entirely on your machine (`convert_local`, no URL fetching, no plugins) and is cached per file until the file changes. Scanned PDFs without a text layer return an error; run OCR on them first (e.g. `ocrmypdf`).
 
 ## Tools
 
@@ -57,7 +63,8 @@ For `assess`, the model writes its justification before the score, which tends t
 ## Setup
 
 ```bash
-cd local-llm-mcp
+git clone https://github.com/marc-hanheide/local_private_ollama_mcp.git
+cd local_private_ollama_mcp
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ollama pull qwen3:14b
@@ -72,8 +79,8 @@ Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claud
 {
   "mcpServers": {
     "local-llm": {
-      "command": "/ABSOLUTE/PATH/local-llm-mcp/.venv/bin/python",
-      "args": ["/ABSOLUTE/PATH/local-llm-mcp/server.py"],
+      "command": "/ABSOLUTE/PATH/local_private_ollama_mcp/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/local_private_ollama_mcp/server.py"],
       "env": {
         "DOC_ROOT": "/Users/you/local-llm/docs",
         "OLLAMA_URL": "http://127.0.0.1:11434",

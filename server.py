@@ -5,6 +5,8 @@ about documents WITHOUT the document text ever passing through Claude.
 Design rules
 - Claude only ever sends file names, never file contents.
 - Files are read from a single sandbox folder (DOC_ROOT); no path traversal.
+- Only PDF, markdown and plain-text files are accepted. PDFs are converted to
+  markdown locally with markitdown, so headings and tables survive.
 - Every tool returns a fixed-shape, low-information answer (labels, yes/no,
   counts, scores) enforced with Ollama's JSON-schema structured output.
 - Free-text output (summaries, answers, assessment justifications) is written
@@ -104,27 +106,51 @@ def _audit(tool: str, args: dict, result: dict) -> dict:
     return result
 
 
+SUPPORTED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt"}
+
+
 def _resolve(name: str) -> Path:
-    """Resolve a file name inside DOC_ROOT, refusing anything outside it."""
+    """Resolve a file name inside DOC_ROOT, refusing anything outside it or of an
+    unsupported type."""
     p = (DOC_ROOT / name).resolve()
     if DOC_ROOT not in p.parents and p != DOC_ROOT:
         raise ValueError("File must be inside the documents folder.")
     if not p.is_file():
         raise FileNotFoundError(f"No such document: {name}")
+    if p.suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise ValueError(f"Unsupported file type '{p.suffix}'. Supported: PDF, markdown (.md) and text (.txt).")
     return p
 
 
+_markitdown = None
+_text_cache: dict[tuple, str] = {}  # (path, mtime, size) -> text; avoids re-converting PDFs per call
+
+
+def _pdf_to_markdown(path: Path) -> str:
+    """Convert a PDF to markdown with markitdown, locally (convert_local never fetches URLs)."""
+    global _markitdown
+    if _markitdown is None:
+        from markitdown import MarkItDown
+
+        _markitdown = MarkItDown(enable_plugins=False)
+    return _markitdown.convert_local(str(path)).text_content or ""
+
+
 def _read_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        from pypdf import PdfReader
-
-        return "\n".join((page.extract_text() or "") for page in PdfReader(path).pages)
-    if suffix == ".docx":
-        import docx
-
-        return "\n".join(p.text for p in docx.Document(path).paragraphs)
-    return path.read_text(encoding="utf-8", errors="replace")
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key in _text_cache:
+        return _text_cache[key]
+    if path.suffix.lower() == ".pdf":
+        text = _pdf_to_markdown(path)
+        if not text.strip():
+            raise ValueError(f"No text could be extracted from {path.name}; it may be a scanned PDF without a text layer.")
+    else:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    if len(_text_cache) >= 16:
+        _text_cache.pop(next(iter(_text_cache)))
+    _text_cache[key] = text
+    return text
 
 
 def _ask(system: str, user: str, schema: dict | None = None, temperature: float = 0.0,
@@ -285,10 +311,10 @@ def _write_md(name: str, kind: str, heading: str, meta: dict, body: str, info: d
 # ----------------------------------------------------------------- tools ---
 @mcp.tool()
 def list_documents() -> dict:
-    """List the document file names available in the local documents folder."""
+    """List the supported documents (PDF, markdown, text) in the local documents folder."""
     names = sorted(
         str(p.relative_to(DOC_ROOT)) for p in DOC_ROOT.rglob("*")
-        if p.is_file() and p.suffix.lower() in {".pdf", ".docx", ".txt", ".md"}
+        if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
     )
     return _audit("list_documents", {}, {"documents": names})
 
