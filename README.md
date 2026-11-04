@@ -156,9 +156,11 @@ The local model's context is small (8192 tokens by default, about 14,000 charact
 
 ### Reference extraction
 
-`extract_references` scans the detected "References", "Bibliography" or similar section(s), or a `char_range` you give, or the whole document if there is no such section. The local model gets a strongly restrictive prompt: copy complete reference entries verbatim, in any citation style, and never return citation markers, body text, names, headings or anything it would have to reconstruct. References don't need a DOI, URL or year.
+`extract_references` scans the detected "References", "Bibliography" or similar section(s), or a `char_range` you give, or the whole document if there is no such section.
 
-Each returned entry is then checked against the scanned text: at least 85% of its words must occur there, which drops invented references. Leading markers such as `[12]` are removed and duplicates merged. Each reference carries a `kind` (journal article, conference paper, book, report, web resource and so on). Web links are additionally collected by pattern matching.
+The text is shown to the local model with numbered lines, and a strongly restrictive prompt asks it only to locate complete reference entries, in any citation style, and return each one's first and last line number and its kind. It never returns citation markers, body text, names or headings, and references don't need a DOI, URL or year. The reference text is then cut from the document itself, so it is verbatim and cannot be invented. Because the model writes a few numbers per reference rather than copying text, extraction is about five times faster than asking for the text.
+
+Out-of-range and overlapping spans are discarded, leading markers such as `[12]` removed and duplicates merged. Each reference carries a `kind` (journal article, conference paper, book, report, web resource and so on). Web links are additionally collected by pattern matching.
 
 ## Documents and caching
 
@@ -174,6 +176,7 @@ Failures come back to Claude as clear tool errors rather than crashes:
 
 - Ollama not running or wrong `OLLAMA_URL`, a rejected or missing bearer token, a model that isn't pulled, or a timeout each get a specific message saying what to fix.
 - Transient failures (connection refused, HTTP 429 and 5xx) are retried twice with backoff; timeouts are not retried.
+- **Long-running work never hangs the client.** Claude gives up on a tool call after about a minute, while a local model can need longer. Every document tool therefore runs as a background job and returns within `TOOL_TIME_BUDGET` seconds (default 50). If the job isn't finished, the tool says it is still running and what it is doing (for example "condensing part 3 of 7"). Calling it again with the same arguments attaches to the same job instead of queuing duplicate work on Ollama, and returns the result once it's ready. Finished results are kept for an hour, and editing the document starts a fresh job.
 - Damaged, encrypted or scanned PDFs, empty files, unsupported types and bad ranges are reported as such.
 - Malformed model output is reported (and partially salvaged for reference lists).
 - Unexpected errors are logged with a traceback to stderr and reported by type only, so no document text leaks into error messages. The server keeps running.
@@ -196,6 +199,7 @@ All settings are environment variables.
 | `NUM_CTX` | `8192` | Context window in tokens; chunk sizes scale with it |
 | `CHARS_PER_TOKEN` | `3.2` | Conservative size estimate; lower it if Ollama warns about truncated prompts |
 | `OLLAMA_TIMEOUT` | `900` | Seconds per model call |
+| `TOOL_TIME_BUDGET` | `50` | Seconds a tool call waits before reporting that its job is still running; keep it below your client's timeout, `0` waits without limit |
 
 Raising `NUM_CTX` (e.g. 32768, about 14 to 16 GB for qwen3:14b) means fewer chunks and better results on long documents.
 

@@ -64,5 +64,36 @@ def test_pdf_outline_is_located_in_text():
     assert toc[0].end == toc[1].start
 
 
+def test_heuristic_ignores_affiliations_headers_and_reference_entries():
+    page = "\n".join(f"Body text line {i} about robots and people." for i in range(5))
+    text = "\n".join([
+        "1 School of Engineering, University of Somewhere, UK",
+        "2 Institute X, Lab Y, 12345 City, Country",
+        "1 Introduction", page,
+        "2 A. Author and B. Author", page,
+        "2 Methods", page,
+        "4 Thepresentstudyassumessymmetricutilities, which ensures [4]",
+        "2.1 Vehicle platform", page,
+        "6 A. Author and B. Author", page,
+        "3 Results", page,
+        "8 A. Author and B. Author", page,
+        "References",
+        "1 A. Author, B. Other, “A study of things,” in Proc. Conf., 2020.",
+        "4 C. Writer et al., Robots in fields, Journal of Things, 2019",
+        "12 D. Person and E. Person",
+        "15 Some Title Without Punctuation",
+        "Appendix",
+        "More text.",
+    ])
+    method, toc = build_toc(text)
+    assert method == "heuristic"
+    assert [t.title for t in toc] == [
+        "1 Introduction", "2 Methods", "2.1 Vehicle platform", "3 Results", "References", "Appendix",
+    ]
+    refs = next(t for t in toc if t.title == "References")
+    assert "15 Some Title Without Punctuation" in text[refs.start:refs.end]
+    assert text[refs.end:].startswith("Appendix")
+
+
 def test_no_structure():
     assert build_toc("just some plain text without headings.") == ("none", [])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -28,10 +29,13 @@ class FakeLLM:
 
     handler: Callable[[Call], str] | None = None
     calls: list[Call] = field(default_factory=list)
+    delay: float = 0.0
 
     async def chat(self, system, user, *, schema=None, temperature=0.0, max_tokens=None) -> str:
         call = Call(system, user, schema, max_tokens)
         self.calls.append(call)
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if self.handler:
             return self.handler(call)
         return default_reply(call)

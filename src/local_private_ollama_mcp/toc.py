@@ -90,24 +90,66 @@ def outline_headings(text: str, outline: list[tuple[int, str]]) -> list[Heading]
     return headings
 
 
+REFERENCE_LIST_HEADINGS = {
+    "references", "bibliography", "works cited", "literature cited", "reference list", "list of references",
+}
+AFTER_REFERENCES_HEADINGS = {"appendix", "appendices", "supplementary material", "supplementary information"}
+# Signs that a numbered line is a reference entry, affiliation or sentence, not a heading.
+YEAR_RE = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
+CITATION_RE = re.compile(r"\[\d+(?:[,–-]\s*\d+)*\]")
+
+
+def _looks_like_heading_title(title: str) -> bool:
+    if title.endswith((".", ",", ";", ":", "-")) or len(title.split()) > 12:
+        return False  # sentences, list items and wrapped lines
+    if any(q in title for q in "“”\"«»"):
+        return False  # quoted titles: reference entries
+    if title.count(",") >= 2 or "et al" in title.lower() or YEAR_RE.search(title):
+        return False  # author lists, affiliations, reference entries
+    if CITATION_RE.search(title):
+        return False  # body text with citation markers
+    if any(len(w) > 25 for w in title.split()):
+        return False  # PDF text with lost spaces ("Thepresentstudyassumes...")
+    return True
+
+
+def _running_headers(lines: list[tuple[int, str]]) -> set[str]:
+    """Lines repeated on many pages, like "12 R. Soni and C. Fox", ignoring page numbers."""
+    counts: dict[str, int] = {}
+    for _, raw in lines:
+        key = re.sub(r"^\d+\s+|\s+\d+$", "", raw.strip()).lower()
+        if key and len(key) <= 80:
+            counts[key] = counts.get(key, 0) + 1
+    return {k for k, n in counts.items() if n >= 3}
+
+
 def heuristic_headings(text: str) -> list[Heading]:
-    headings = []
-    for pos, raw in _line_starts(text):
+    lines = _line_starts(text)
+    headers = _running_headers(lines)
+    headings: list[Heading] = []
+    in_references = False
+    for pos, raw in lines:
         line = raw.strip()
         if not line or len(line) > 110:
+            continue
+        bare = line.rstrip(":").strip()
+        bare_l = re.sub(r"^(?:\d+(?:\.\d+)*\.?|[IVX]+\.)\s+", "", bare).lower()
+        if in_references and bare_l not in AFTER_REFERENCES_HEADINGS:
+            continue  # numbered entries in a reference list are not headings
+        if re.sub(r"^\d+\s+|\s+\d+$", "", line).lower() in headers:
             continue
         m = NUMBERED_RE.match(line)
         if m:
             title = m.group(2).strip()
-            # Body sentences and list items usually end with a full stop or are long.
-            if title.endswith((".", ",", ";", ":")) or len(title.split()) > 12:
+            if not _looks_like_heading_title(title):
                 continue
             level = m.group(1).count(".") + 1
             headings.append(Heading(level, f"{m.group(1)} {title}", pos))
+        elif bare.lower() in KNOWN_HEADINGS:
+            headings.append(Heading(1, bare, pos))
+        else:
             continue
-        bare = line.rstrip(":").strip().lower()
-        if bare in KNOWN_HEADINGS:
-            headings.append(Heading(1, line.rstrip(":").strip(), pos))
+        in_references = bare_l in REFERENCE_LIST_HEADINGS
     return headings
 
 

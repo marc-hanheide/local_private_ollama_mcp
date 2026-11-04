@@ -145,5 +145,5 @@ class ReferencesResult(BaseModel):
     scope: list[str] = Field(description="Which parts were scanned, e.g. the detected 'References' section.")
     ranges: list[CharRange]
     chunks: int
-    dropped_unverified: int = Field(description="Model outputs discarded because they do not occur in the document.")
+    dropped_unverified: int = Field(description="Model outputs discarded as invalid, overlapping or too short.")
     written_to: str | None = None

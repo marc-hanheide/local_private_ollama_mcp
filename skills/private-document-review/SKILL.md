@@ -103,13 +103,17 @@ user asks.
 
 ## Handling errors
 
+- "still running on the local model": the work continues in the background. Tell the user, wait
+  about 30 seconds, then call the same tool with exactly the same arguments; repeat until the
+  result arrives. Changing the arguments or starting other heavy calls meanwhile only queues more
+  work on the model, which handles one request at a time.
 - "local model unavailable": call `server_status` and report its `problems`; do not retry
   repeatedly.
 - Unsupported type, scanned PDF, damaged file or empty file: tell the user what to do (export to
   PDF, run OCR, check the file).
 - "malformed output" or a label outside the list: retry once with a simpler, narrower question
   or a smaller `char_range`, then report it.
-- Timeouts: narrow the task with `char_range`.
+- Timeouts from the model itself: narrow the task with `char_range`.
 
 ## Example
 

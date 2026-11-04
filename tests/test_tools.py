@@ -1,12 +1,16 @@
+import asyncio
+import dataclasses
 import json
+import re
 
 import pytest
 import yaml
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
+from local_private_ollama_mcp.documents import DocumentStore
 from local_private_ollama_mcp.llm import LLMError
-from local_private_ollama_mcp.server import REF_SYSTEM, SYSTEM_NOTES
+from local_private_ollama_mcp.server import REF_SYSTEM, SYSTEM_NOTES, create_server
 
 from .conftest import make_pdf
 
@@ -58,13 +62,16 @@ async def test_overview_returns_toc_with_ranges(client, docs):
     assert "References" not in DOC[wp["start"]:wp["end"]]
 
 
-async def test_overview_of_pdf_uses_outline_and_cache(client, docs):
+async def test_overview_of_pdf_uses_outline_and_cache(client, docs, settings, llm):
     make_pdf(docs / "p.pdf", [("Introduction", "Robots in fields."), ("Methods", "We navigate without GPS.")])
     ov1 = (await client.call_tool("document_overview", {"name": "p.pdf"})).structured_content
     assert ov1["file_type"] == "pdf" and ov1["pages"] == 2 and not ov1["conversion_cached"]
     assert ov1["toc_method"] in ("pdf_outline", "heuristic")
     assert [s["title"] for s in ov1["sections"]] == ["Introduction", "Methods"]
-    ov2 = (await client.call_tool("document_overview", {"name": "p.pdf"})).structured_content
+    # A restarted server reuses the conversion cached on disk.
+    fresh = create_server(settings, llm, DocumentStore(settings))
+    async with Client(fresh) as c2:
+        ov2 = (await c2.call_tool("document_overview", {"name": "p.pdf"})).structured_content
     assert ov2["conversion_cached"]
 
 
@@ -132,38 +139,115 @@ async def test_answer_and_summary_notes(client, docs, settings):
     assert "Model answer." not in json.dumps(a)  # text stays on disk
 
 
-async def test_extract_references_scopes_to_reference_section(client, docs, llm):
+def line_span_fake(spans_for):
+    """Fake model for extract_references: `spans_for(lines)` maps the numbered lines it is shown
+    (line number -> text) to a list of (first, last, kind)."""
+
+    def handler(c):
+        if c.system != REF_SYSTEM:
+            return "x"
+        shown = {int(m.group(1)): m.group(2) for m in re.finditer(r"^L(\d+)\| (.*)$", c.user, re.M)}
+        return json.dumps({"references": [{"first_line": f, "last_line": l, "kind": k} for f, l, k in spans_for(shown)]})
+
+    return handler
+
+
+def find(shown, needle):
+    return next(n for n, t in shown.items() if needle in t)
+
+
+async def test_extract_references_returns_verbatim_spans(client, docs, llm):
     (docs / "p.md").write_text(DOC)
-    refs = [
-        {"text": "[1] Hanheide, M. et al. (2017). The STRANDS Project: Long-Term Autonomy in Everyday "
-                 "Environments. IEEE Robotics and Automation Magazine.", "kind": "journal_article"},
-        {"text": "European Commission. Horizon Europe Work Programme 2025, Cluster 6. Brussels.", "kind": "report"},
-        {"text": "ROS 2 Documentation: Navigation2. https://docs.nav2.org/", "kind": "web_resource"},
-        {"text": "Doe, J. (2019). Quantum harvesting with drones. Nature.", "kind": "journal_article"},
-        {"text": "European Commission. Horizon Europe Work Programme 2025, Cluster 6. Brussels.", "kind": "report"},
-    ]
-    llm.handler = lambda c: json.dumps({"references": refs}) if c.system == REF_SYSTEM else "x"
+    llm.handler = line_span_fake(lambda shown: [
+        (find(shown, "[1]"), find(shown, "[1]"), "journal_article"),
+        (find(shown, "European Commission"), find(shown, "European Commission"), "report"),
+        (find(shown, "Navigation2"), find(shown, "Navigation2"), "web_resource"),
+        (999, 1000, "book"),  # out of range: dropped
+        (find(shown, "[1]"), find(shown, "[1]"), "journal_article"),  # duplicate: merged
+    ])
     r = (await client.call_tool("extract_references", {"name": "p.md", "save_to_file": True})).structured_content
     assert r["scope"] == ["section 'References'"]
     texts = [x["text"] for x in r["references"]]
-    # Leading marker stripped, a reference without DOI or year kept, the invented one dropped, duplicate removed.
-    assert texts[0].startswith("Hanheide, M.")
-    assert any(t.startswith("European Commission") for t in texts)
-    assert not any("Quantum" in t for t in texts)
-    assert len(texts) == 3 and r["dropped_unverified"] == 1
+    assert texts[0].startswith("Hanheide, M. et al. (2017). The STRANDS Project")  # marker stripped, verbatim
+    assert texts[1] == "European Commission. Horizon Europe Work Programme 2025, Cluster 6. Brussels."
+    assert [x["kind"] for x in r["references"]] == ["journal_article", "report", "web_resource"]
+    assert r["dropped_unverified"] == 1
     assert r["web_links"] == ["https://docs.nav2.org/"]
-    # Only the reference section was sent to the model.
-    sent = [c.user for c in llm.calls if c.system == REF_SYSTEM]
-    assert all("GPS-free" not in u for u in sent)
+    # Only the reference section was shown to the model, with numbered lines, and no text was requested back.
+    sent = [c for c in llm.calls if c.system == REF_SYSTEM]
+    assert all("GPS-free" not in c.user and "L1| " in c.user for c in sent)
+    assert all(c.max_tokens <= 64 + 24 * 10 for c in sent)
     assert front_matter(r["written_to"])["reference_count"] == 3
+
+
+async def test_extract_references_multiline_entries_and_chunk_overlap(client, docs, llm, settings):
+    entries = [f"[{i}] Author{i}, A. and Other, B. Title number {i} about\nrobot navigation in fields. Journal of Robots, {i}, 2020."
+               for i in range(1, 121)]
+    (docs / "long.md").write_text("# Paper\nBody.\n\n# References\n" + "\n".join(entries) + "\n")
+
+    def spans(shown):
+        out = []
+        for n, t in sorted(shown.items()):
+            if t.startswith("[") and n + 1 in shown:
+                out.append((n, n + 1, "journal_article"))  # entries spanning a chunk edge are cut off
+        return out
+
+    llm.handler = line_span_fake(spans)
+    r = (await client.call_tool("extract_references", {"name": "long.md"})).structured_content
+    assert r["chunks"] > 1
+    texts = [x["text"] for x in r["references"]]
+    assert len(texts) == 120 and len(set(texts)) == 120
+    assert texts[4] == "Author5, A. and Other, B. Title number 5 about robot navigation in fields. Journal of Robots, 5, 2020."
 
 
 async def test_extract_references_salvages_truncated_json(client, docs, llm):
     (docs / "p.md").write_text(DOC)
-    llm.handler = lambda c: ('{"references":[{"text":"European Commission. Horizon Europe Work Programme 2025, '
-                             'Cluster 6. Brussels.","kind":"report"},{"text":"Cut off mid')
+
+    def handler(c):
+        shown = {int(m.group(1)): m.group(2) for m in re.finditer(r"^L(\d+)\| (.*)$", c.user, re.M)}
+        n = find(shown, "European Commission")
+        return f'{{"references":[{{"first_line":{n},"last_line":{n},"kind":"report"}},{{"first_line":1'
+
+    llm.handler = handler
     r = (await client.call_tool("extract_references", {"name": "p.md"})).structured_content
-    assert len(r["references"]) == 1
+    assert [x["kind"] for x in r["references"]] == ["report"]
+
+
+async def test_slow_job_returns_within_budget_and_is_collected_later(docs, settings, llm):
+    (docs / "p.md").write_text(DOC)
+    fast = dataclasses.replace(settings, tool_time_budget=0.2)
+    llm.delay = 0.5
+    srv = create_server(fast, llm, DocumentStore(fast))
+    async with Client(srv) as c:
+        with pytest.raises(ToolError, match="still running.*same arguments"):
+            await c.call_tool("yes_no", {"name": "p.md", "question": "Is GPS used?"})
+        # A repeat call attaches to the same job instead of starting another one.
+        with pytest.raises(ToolError, match="still running"):
+            await c.call_tool("yes_no", {"name": "p.md", "question": "Is GPS used?"})
+        await asyncio.sleep(0.6)
+        r = (await c.call_tool("yes_no", {"name": "p.md", "question": "Is GPS used?"})).structured_content
+        assert r["answer"] == "yes"
+    assert len(llm.final_calls()) == 1
+
+
+async def test_failed_job_can_be_retried(client, docs, llm):
+    (docs / "p.md").write_text(DOC)
+    llm.handler = lambda c: "not json"
+    with pytest.raises(ToolError, match="malformed"):
+        await client.call_tool("yes_no", {"name": "p.md", "question": "Is it?"})
+    llm.handler = None
+    r = (await client.call_tool("yes_no", {"name": "p.md", "question": "Is it?"})).structured_content
+    assert r["answer"] == "yes"
+
+
+async def test_editing_the_document_starts_a_new_job(client, docs, llm):
+    (docs / "p.md").write_text(DOC)
+    await client.call_tool("yes_no", {"name": "p.md", "question": "Is it?"})
+    await client.call_tool("yes_no", {"name": "p.md", "question": "Is it?"})
+    assert len(llm.final_calls()) == 1  # second call served from the finished job
+    (docs / "p.md").write_text(DOC + "\nAppendix text.\n")
+    await client.call_tool("yes_no", {"name": "p.md", "question": "Is it?"})
+    assert len(llm.final_calls()) == 2
 
 
 async def test_ollama_failure_becomes_clean_tool_error(client, docs, llm):

@@ -35,6 +35,9 @@ class Settings:
     chars_per_token: float = 3.2
     request_timeout: float = 900.0
     max_condense_rounds: int = 4
+    # Seconds a tool call waits for its result before reporting that the job is still running
+    # (MCP clients such as Claude give up after about 60 s). 0 waits without limit.
+    tool_time_budget: float = 50.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -49,6 +52,7 @@ class Settings:
             num_ctx=int(os.environ.get("NUM_CTX", "8192")),
             chars_per_token=float(os.environ.get("CHARS_PER_TOKEN", "3.2")),
             request_timeout=float(os.environ.get("OLLAMA_TIMEOUT", "900")),
+            tool_time_budget=float(os.environ.get("TOOL_TIME_BUDGET", "50")),
         )
 
     def ensure_dirs(self) -> None:
@@ -75,9 +79,9 @@ class Settings:
 
     @property
     def ref_chunk_chars(self) -> int:
-        """Reference extraction is output-heavy: ~35% of the window for input."""
-        return int(self.num_ctx * 0.35 * self.chars_per_token)
+        """Reference extraction returns only line numbers, so input can use ~50% of the window."""
+        return int(self.num_ctx * 0.5 * self.chars_per_token)
 
     @property
     def ref_output_tokens(self) -> int:
-        return int(self.num_ctx * 0.45)
+        return int(self.num_ctx * 0.3)
