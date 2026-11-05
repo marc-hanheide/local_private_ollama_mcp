@@ -41,10 +41,10 @@ Or run it without installing, always fetching the latest version:
 uvx --from git+https://github.com/marc-hanheide/local_private_ollama_mcp local-private-ollama-mcp
 ```
 
-Then create the documents folder and put your PDFs, markdown and text files in it:
+Then put your PDFs, markdown and text files in the documents folder. By default this is `~/Downloads` (or `~/Download`); to use a dedicated folder instead, create it and set `DOC_ROOT`:
 
 ```bash
-mkdir -p ~/local-llm/docs
+mkdir -p ~/private-docs
 ```
 
 ## Use it in Claude Desktop
@@ -57,7 +57,7 @@ Add the server to `claude_desktop_config.json` and restart Claude Desktop. The f
     "local-llm": {
       "command": "/Users/you/.local/bin/local-private-ollama-mcp",
       "env": {
-        "DOC_ROOT": "/Users/you/local-llm/docs",
+        "DOC_ROOT": "/Users/you/private-docs",
         "OLLAMA_MODEL": "qwen3:14b",
         "OLLAMA_API_KEY": "your-bearer-token-if-needed"
       }
@@ -76,7 +76,7 @@ To run straight from GitHub instead of installing, use `uvx`:
     "local-llm": {
       "command": "/Users/you/.local/bin/uvx",
       "args": ["--from", "git+https://github.com/marc-hanheide/local_private_ollama_mcp", "local-private-ollama-mcp"],
-      "env": { "DOC_ROOT": "/Users/you/local-llm/docs" }
+      "env": { "DOC_ROOT": "/Users/you/private-docs" }
     }
   }
 }
@@ -88,7 +88,7 @@ Leave out `OLLAMA_API_KEY` for a plain local Ollama. If you'd rather not keep a 
 
 ```bash
 claude mcp add local-llm --scope user \
-  -e DOC_ROOT="$HOME/local-llm/docs" \
+  -e DOC_ROOT="$HOME/private-docs" \
   -e OLLAMA_MODEL=qwen3:14b \
   -- local-private-ollama-mcp
 ```
@@ -189,10 +189,10 @@ All settings are environment variables.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOC_ROOT` | `~/local-llm/docs` | Sandbox folder documents are read from |
+| `DOC_ROOT` | `~/Downloads` (or `~/Download`) | Sandbox folder documents are read from |
 | `OUTPUT_DIR` | `~/Downloads` (or `~/Download`) | Where markdown notes are written |
-| `CACHE_DIR` | `~/local-llm/cache` | Converted-PDF cache |
-| `AUDIT_LOG` | `~/local-llm/audit.jsonl` | Log of everything returned to Claude |
+| `CACHE_DIR` | `~/.local-llm-mcp/cache` | Converted-PDF cache |
+| `AUDIT_LOG` | `~/.local-llm-mcp/audit.jsonl` | Log of everything returned to Claude |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `OLLAMA_API_KEY` | unset | Bearer token, sent as `Authorization: Bearer <token>` |
 | `OLLAMA_MODEL` | `qwen3:14b` | Model name |
@@ -202,6 +202,8 @@ All settings are environment variables.
 | `TOOL_TIME_BUDGET` | `50` | Seconds a tool call waits before reporting that its job is still running; keep it below your client's timeout, `0` waits without limit |
 
 Raising `NUM_CTX` (e.g. 32768, about 14 to 16 GB for qwen3:14b) means fewer chunks and better results on long documents.
+
+If the server's working directory contains a `.env` file, it is loaded at start-up (see [`.env.example`](.env.example)). Variables set explicitly in the environment, for example in your MCP client's `env` block, take precedence over the file. Lines are `KEY=VALUE`; `$HOME` is expanded unless the value is in single quotes. The file may hold your token, so it is git-ignored.
 
 ## Development
 
@@ -219,7 +221,7 @@ The test suite covers the table of contents, the hash-keyed cache, every tool th
 
 The [MCP Server Inspector](https://marketplace.visualstudio.com/items?itemName=co3moz.vsc-mcp-inspector) extension (`co3moz.vsc-mcp-inspector`) runs the real server over stdio and lets you call its tools from a form, with no Claude involved.
 
-1. Make sure Ollama is running and the model is pulled (`ollama pull gemma4:e4b`), and put a test PDF, markdown or text file in your documents folder, e.g. `~/local-llm/docs`.
+1. Make sure Ollama is running and the model is pulled (`ollama pull gemma4:e4b`), and put a test PDF, markdown or text file in your documents folder (`~/Downloads` by default).
 2. Install the extension, open the **MCP Inspector** view in the activity bar and click **Create New Connection**.
 3. Choose the **STDIO** transport and fill in:
 
@@ -231,17 +233,7 @@ The [MCP Server Inspector](https://marketplace.visualstudio.com/items?itemName=c
    | Working directory | `${workspaceFolder}` |
 
    Running through `uv run` in the workspace folder uses your checked-out source, so edits take effect after a reconnect.
-4. Add these environment variables (values may use `${userHome}` and `${env:NAME}`):
-
-   | Variable | Value |
-   |---|---|
-   | `DOC_ROOT` | `${userHome}/local-llm/docs` |
-   | `OUTPUT_DIR` | `${userHome}/local-llm/out` |
-   | `OLLAMA_URL` | `http://127.0.0.1:11434` |
-   | `OLLAMA_MODEL` | `gemma4:e4b` |
-   | `OLLAMA_API_KEY` | only if your Ollama needs a token, e.g. `${env:OLLAMA_API_KEY}` |
-
-   Leave `OLLAMA_API_KEY` out for a plain local Ollama. The extension stores environment values in the OS keychain.
+4. Configure the server. The simplest way is a `.env` file in the workspace folder, which the server reads at start-up: `cp .env.example .env` and adjust it. Alternatively add environment variables in the connection form (values may use `${env:HOME}` and `${env:NAME}`), for example `DOC_ROOT` = `${env:HOME}/private-docs` and `OLLAMA_MODEL` = `gemma4:e4b`. Variables set in the connection take precedence over `.env`. The extension stores environment values in the OS keychain.
 5. Click **Test Connection**, then **Connect & Save**. Expand the connection, open `server_status` and press **Run Tool**. `ollama_reachable` and `model_available` should be `true` and `problems` empty; otherwise fix what it lists.
 6. Run `list_documents`, then `document_overview` with a file name, then the other tools (for example `yes_no` with a `char_range` from the overview). Notes are written to `OUTPUT_DIR`.
 

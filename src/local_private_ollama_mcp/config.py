@@ -7,6 +7,31 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def load_dotenv(path: Path | str = ".env") -> bool:
+    """Load KEY=VALUE lines from `path` into os.environ, if the file exists.
+    Variables that are already set are never overwritten. `$VAR` is expanded unless the value is single-quoted."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or key in os.environ:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            quote, value = value[0], value[1:-1]
+        else:
+            quote, value = "", value.split(" #", 1)[0].rstrip()
+        os.environ[key] = value if quote == "'" else os.path.expandvars(value)
+    return True
+
+
 def _default_output_dir() -> Path:
     """~/Downloads, or ~/Download if that is the folder that exists on this machine."""
     home = Path.home()
@@ -42,10 +67,10 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
-            doc_root=_path("DOC_ROOT", "~/local-llm/docs"),
+            doc_root=_path("DOC_ROOT", _default_output_dir()),
             output_dir=_path("OUTPUT_DIR", _default_output_dir()),
-            cache_dir=_path("CACHE_DIR", "~/local-llm/cache"),
-            audit_log=_path("AUDIT_LOG", "~/local-llm/audit.jsonl"),
+            cache_dir=_path("CACHE_DIR", "~/.local-llm-mcp/cache"),
+            audit_log=_path("AUDIT_LOG", "~/.local-llm-mcp/audit.jsonl"),
             ollama_url=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
             ollama_api_key=os.environ.get("OLLAMA_API_KEY", "").strip(),
             model=os.environ.get("OLLAMA_MODEL", "qwen3:14b"),

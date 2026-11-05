@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import references as refs_mod
-from .config import Settings
+from .config import Settings, load_dotenv
 from .documents import Document, DocumentError, DocumentStore
 from .jobs import JobRunner, report_progress
 from .llm import LLM, LLMError, OllamaLLM
@@ -744,6 +744,8 @@ def _clean_url(u: str) -> str:
 def main() -> None:
     # stdio transport: stdout carries the protocol, so log to stderr only.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+    if load_dotenv():
+        log.info("Loaded settings from .env in the working directory")
     try:
         settings = Settings.from_env()
     except ValueError as e:  # e.g. NUM_CTX=abc
