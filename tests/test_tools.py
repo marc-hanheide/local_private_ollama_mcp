@@ -102,7 +102,8 @@ async def test_invalid_ranges_and_inputs(client, docs):
 async def test_large_document_is_condensed_within_context(client, docs, llm, settings):
     big = "\n\n".join(f"Paragraph {i}: field trials of robot navigation at farm {i}." * 5 for i in range(400))
     (docs / "big.txt").write_text(big)
-    r = (await client.call_tool("assess", {"name": "big.txt", "criterion": "feasibility of the trials",
+    r = (await client.call_tool("assess", {"name": "big.txt", "filename": "big-feasibility.md",
+                                           "criterion": "feasibility of the trials",
                                            "min_score": 1, "max_score": 5})).structured_content
     proc = r["processing"]
     assert proc["condensed"] and proc["chunks"] > 1 and not proc["truncated"]
@@ -119,24 +120,53 @@ async def test_large_document_is_condensed_within_context(client, docs, llm, set
 async def test_assess_clamps_and_writes_justification(client, docs, llm):
     (docs / "p.md").write_text(DOC)
     llm.handler = lambda c: json.dumps({"justification": "Clear but thin.", "score": 42})
-    r = (await client.call_tool("assess", {"name": "p.md", "criterion": "clarity", "min_score": 1,
+    r = (await client.call_tool("assess", {"name": "p.md", "filename": "p-clarity", "criterion": "clarity",
+                                           "min_score": 1,
                                            "max_score": 6, "rubric": "1 poor, 6 excellent"})).structured_content
-    assert r["score"] == 6
+    assert r["score"] == 6 and r["written_to"].endswith("p-clarity.md")  # '.md' added
     text = open(r["written_to"], encoding="utf-8").read()
     assert "Clear but thin." in text and "clamped" in text
     with pytest.raises(ToolError, match="lower than"):
-        await client.call_tool("assess", {"name": "p.md", "criterion": "clarity", "min_score": 5, "max_score": 5})
+        await client.call_tool("assess", {"name": "p.md", "filename": "x.md", "criterion": "clarity",
+                                          "min_score": 5, "max_score": 5})
 
 
 async def test_answer_and_summary_notes(client, docs, settings):
     (docs / "p.md").write_text(DOC)
-    a = (await client.call_tool("answer_to_file", {"name": "p.md", "question": "What is WP1?"})).structured_content
-    s = (await client.call_tool("summarise_to_file", {"name": "p.md"})).structured_content
+    a = (await client.call_tool("answer_to_file", {"name": "p.md", "filename": "p-wp1-answer.md",
+                                                   "question": "What is WP1?"})).structured_content
+    s = (await client.call_tool("summarise_to_file", {"name": "p.md", "filename": "p-summary.md"})).structured_content
     for res, kind in ((a, "answer"), (s, "summary")):
         assert res["written_to"].startswith(str(settings.output_dir))
         fm = front_matter(res["written_to"])
         assert fm["type"] == kind and fm["model"] == settings.model and len(fm["source_sha256"]) == 64
     assert "Model answer." not in json.dumps(a)  # text stays on disk
+
+
+async def test_note_filename_is_used_checked_and_not_overwritten(client, docs, settings):
+    (docs / "p.md").write_text(DOC)
+    call = {"name": "p.md", "question": "What is WP1?"}
+    first = (await client.call_tool("answer_to_file", {**call, "filename": "Wp1 answer.MD"})).structured_content
+    assert first["written_to"] == str(settings.output_dir / "Wp1 answer.md")
+    second = (await client.call_tool("answer_to_file", {**call, "question": "What is WP2?",
+                                                         "filename": "Wp1 answer"})).structured_content
+    assert second["written_to"] == str(settings.output_dir / "Wp1 answer-2.md")
+    for bad in ("../evil.md", "sub/x.md", "sub\\x.md", "/abs.md", ".hidden.md", "a:b.md", "a|b", ".md", "bad.",
+                "   ", "x" * 130, "tab\there"):
+        with pytest.raises(ToolError):
+            await client.call_tool("answer_to_file", {**call, "filename": bad})
+    with pytest.raises(ToolError):  # required
+        await client.call_tool("answer_to_file", call)
+    assert sorted(p.name for p in settings.output_dir.iterdir() if p.suffix == ".md") == [
+        "Wp1 answer-2.md", "Wp1 answer.md"]
+
+
+async def test_references_filename_required_only_when_saving(client, docs, settings):
+    (docs / "p.md").write_text(DOC)
+    with pytest.raises(ToolError, match="filename is required"):
+        await client.call_tool("extract_references", {"name": "p.md", "save_to_file": True})
+    r = (await client.call_tool("extract_references", {"name": "p.md"})).structured_content
+    assert r["written_to"] is None
 
 
 def line_span_fake(spans_for):
@@ -165,7 +195,8 @@ async def test_extract_references_returns_verbatim_spans(client, docs, llm):
         (999, 1000, "book"),  # out of range: dropped
         (find(shown, "[1]"), find(shown, "[1]"), "journal_article"),  # duplicate: merged
     ])
-    r = (await client.call_tool("extract_references", {"name": "p.md", "save_to_file": True})).structured_content
+    r = (await client.call_tool("extract_references", {"name": "p.md", "save_to_file": True,
+                                                       "filename": "p-references"})).structured_content
     assert r["scope"] == ["section 'References'"]
     texts = [x["text"] for x in r["references"]]
     assert texts[0].startswith("Hanheide, M. et al. (2017). The STRANDS Project")  # marker stripped, verbatim
@@ -293,7 +324,7 @@ async def test_unwritable_output_dir(client, docs, settings, llm):
         if (settings.output_dir / "probe").exists() or _can_write(settings.output_dir):
             pytest.skip("running as root; permissions not enforced")
         with pytest.raises(ToolError, match="Could not write the note"):
-            await client.call_tool("answer_to_file", {"name": "p.md", "question": "What?"})
+            await client.call_tool("answer_to_file", {"name": "p.md", "filename": "q.md", "question": "What?"})
     finally:
         settings.output_dir.chmod(0o700)
 

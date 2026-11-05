@@ -85,7 +85,12 @@ Choose the tool by what the user needs:
 | A rating against a criterion | `assess` with `min_score`, `max_score` and a `rubric`; one call per criterion |
 | A summary of a part or the whole | `summarise_to_file` with short, specific `instructions` |
 | An answer needing explanation | `answer_to_file` with one specific `question` |
-| The reference list | `extract_references` (scans the references section by default; `save_to_file: true` for a note) |
+| The reference list | `extract_references` (scans the references section by default; `save_to_file: true` plus a `filename` for a note) |
+
+Every tool that writes a note (`summarise_to_file`, `answer_to_file`, `assess`, and
+`extract_references` with `save_to_file`) needs a `filename` you choose: a flat, semantically rich
+name such as `wp3-risk-register-summary.md` that says the topic, section and task. Never include a
+directory; `.md` is added if missing, and an existing note is never overwritten.
 
 `extract_references` is the one tool that returns document text (the references) to you. Use
 it only when the user wants the references, and do not search the web for them unless the
@@ -126,4 +131,5 @@ objectives and feasibility of the work plan, scored 1 to 5, and summarise the ri
 3. `assess` the Work plan section: criterion "feasibility of the work plan given its timeline
    and resources", scale 1 to 5, rubric "1 = unrealistic, 5 = clearly achievable".
 4. `summarise_to_file` on the Risks section: "Summarise the main risks and their mitigations."
+   with `filename` `partner-report-risks-and-mitigations-summary.md`.
 5. Reply with a two-row score table, the three note paths, and any condensing flags.

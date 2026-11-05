@@ -133,10 +133,10 @@ A test checks that the skill mentions every tool the server offers and no tools 
 | `count_mentions(name, term, char_range?)` | A count (regex, no LLM) |
 | `yes_no(name, question, char_range?)` | `yes`/`no`/`unclear` and a confidence |
 | `classify(name, labels, char_range?)` | One label from the 2 to 20 you gave |
-| `summarise_to_file(name, instructions, style, char_range?)` | Path and word count; the summary stays on disk |
-| `answer_to_file(name, question, max_words, char_range?)` | Path and word count; the answer stays on disk |
-| `assess(name, criterion, min_score, max_score, rubric, char_range?)` | The integer score; the justification stays on disk |
-| `extract_references(name, char_range?, save_to_file)` | The references with their kind, web links, and what was scanned |
+| `summarise_to_file(name, filename, instructions, style, char_range?)` | Path and word count; the summary stays on disk |
+| `answer_to_file(name, filename, question, max_words, char_range?)` | Path and word count; the answer stays on disk |
+| `assess(name, filename, criterion, min_score, max_score, rubric, char_range?)` | The integer score; the justification stays on disk |
+| `extract_references(name, char_range?, save_to_file, filename?)` | The references with their kind, web links, and what was scanned |
 
 All model-backed tools also return a `processing` block: the character range used, the number of chunks, and whether the text had to be condensed or truncated.
 
@@ -167,6 +167,8 @@ Out-of-range and overlapping spans are discarded, leading markers such as `[12]`
 Only **PDF**, **markdown** and **plain text** files are accepted. PDFs are converted to markdown locally with [markitdown](https://github.com/microsoft/markitdown) (no URL fetching, no plugins). The converted text, page count, title and outline are cached in `CACHE_DIR`, keyed by the SHA-256 of the PDF and the markitdown version, so repeat calls skip conversion until the file's content changes. The cache folder is created with owner-only permissions. Scanned PDFs without a text layer return an error; run OCR on them first (e.g. `ocrmypdf`).
 
 ## Notes for Obsidian
+
+Claude chooses each note's file name through the `filename` parameter of the tools that write notes, and is told to pick a flat, descriptive name such as `wp3-risk-register-summary.md`. The server rejects names with a directory, a leading dot, control characters or any of `< > : " | ? *`, adds `.md` if missing, and never overwrites an existing note (it appends `-2`, `-3` and so on).
 
 Notes are markdown files with YAML front matter (`title`, `created`, `tags`, `type`, `source`, `source_sha256`, `model`, the range used, `chunks`, `condensed`, plus `question`, `criterion`, `score`, `score_min`, `score_max` or `rubric` as relevant), so you can query them with Dataview or Bases. Callouts flag when only part of the document was used or when it was condensed.
 

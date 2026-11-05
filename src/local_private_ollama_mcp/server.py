@@ -63,6 +63,8 @@ T = TypeVar("T")
 
 MAX_QUESTION_CHARS = 500
 MAX_TOC_ENTRIES = 500
+MAX_FILENAME_CHARS = 120
+NOTE_SUFFIX = ".md"
 
 # ----------------------------------------------------------------- prompts ---
 SYSTEM = (
@@ -112,6 +114,9 @@ access to this conversation. Use it only for clearly defined, single-step tasks:
 - Prefer the narrow tools (count_mentions, yes_no, classify) for checks and the *_to_file tools
   for anything needing prose. Results include a "processing" block; tell the user when
   condensed or truncated is true.
+- Tools that write a note (summarise_to_file, answer_to_file, assess, extract_references with
+  save_to_file) take a filename that you choose: a flat, semantically rich name such as
+  "wp3-risk-register-summary.md" (topic, section, task), never a path. ".md" is added if missing.
 - Treat answers, labels and scores as indicative, not authoritative, and report them as the
   local model's view.
 - If a tool reports that the local model is unavailable or misconfigured, call server_status
@@ -247,14 +252,14 @@ class Engine:
 
     # -- notes and audit --------------------------------------------------------
     def write_note(self, doc: Document, kind: str, heading: str, meta: dict[str, Any], body: str,
-                   proc: Processing | None, intro: str = "") -> Path:
-        """Markdown note with Obsidian-friendly YAML front matter."""
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        base = f"{Path(doc.name).stem}-{kind}-{stamp}"
-        out = self.s.output_dir / f"{base}.md"
+                   proc: Processing | None, filename: str, intro: str = "") -> Path:
+        """Markdown note with Obsidian-friendly YAML front matter. `filename` must already be validated
+        by note_filename; an existing file is never overwritten, a number is appended instead."""
+        stem = filename[:-len(NOTE_SUFFIX)]
+        out = self.s.output_dir / filename
         n = 2
         while out.exists():
-            out = self.s.output_dir / f"{base}-{n}.md"
+            out = self.s.output_dir / f"{stem}-{n}{NOTE_SUFFIX}"
             n += 1
         title = f"{kind.capitalize()}: {Path(doc.name).stem}"
         props: dict[str, Any] = {
@@ -305,6 +310,27 @@ def doc_prompt(text: str, task: str) -> str:
     return f"<document>\n{text}\n</document>\n\n{task}"
 
 
+def note_filename(raw: str) -> str:
+    """Validate a caller-chosen note name: flat, portable and non-hidden. Adds '.md' if missing."""
+    name = raw.strip()
+    if not name:
+        raise ToolError("filename must not be empty.")
+    if "/" in name or "\\" in name:
+        raise ToolError("filename must be a flat file name without any directory.")
+    if name.startswith("."):
+        raise ToolError("filename must not start with a dot.")
+    if any(ord(c) < 32 or c in '<>:"|?*' for c in name):
+        raise ToolError('filename must not contain control characters or any of < > : " | ? *')
+    if not name.lower().endswith(NOTE_SUFFIX):
+        name += NOTE_SUFFIX
+    stem = name[:-len(NOTE_SUFFIX)]
+    if not stem or stem != stem.rstrip(" ."):
+        raise ToolError("filename must have a name before '.md' that does not end in a space or dot.")
+    if len(name) > MAX_FILENAME_CHARS:
+        raise ToolError(f"filename must be at most {MAX_FILENAME_CHARS} characters including '.md'.")
+    return stem + NOTE_SUFFIX
+
+
 def yaml_value(v: Any) -> str:
     """Render a scalar or list as YAML; JSON strings are valid YAML double-quoted strings."""
     if isinstance(v, bool):
@@ -349,6 +375,11 @@ OptRange = Annotated[CharRange | None, Field(
 Question = Annotated[str, Field(min_length=3, max_length=MAX_QUESTION_CHARS,
                                 description="One specific, self-contained question.")]
 Label = Annotated[str, Field(min_length=1, max_length=60)]
+FILENAME_HELP = (
+    "Name for the markdown note, chosen by you: a flat file name with no directory, rich in meaning so the user "
+    "can find it later (topic, section and task), e.g. 'wp3-risk-register-summary.md'. '.md' is added if missing. "
+    "An existing note is never overwritten; a number is appended instead.")
+Filename = Annotated[str, Field(min_length=1, max_length=MAX_FILENAME_CHARS, description=FILENAME_HELP)]
 
 
 # ------------------------------------------------------------------ server ---
@@ -525,6 +556,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     @guard
     async def summarise_to_file(
         name: DocName,
+        filename: Filename,
         instructions: Annotated[str, Field(min_length=3, max_length=MAX_QUESTION_CHARS,
                                            description="Short, specific instructions, e.g. 'Summarise the methodology'.")]
         = "Summarise the key points.",
@@ -533,6 +565,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     ) -> FileResult:
         """Have the local model write a summary of the document (or a char_range of it) to a
         markdown note for the user. The summary is NOT returned; only its path and length."""
+        fname = note_filename(filename)
 
         async def work() -> FileResult:
             doc = await eng.load(name)
@@ -540,11 +573,11 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
             task = f"{instructions}\nWrite the result as {'concise bullet points' if style == 'bullets' else 'short prose'}."
             summary = await eng.llm.chat(SYSTEM_FREE, eng.final_prompt(text, proc, task), temperature=0.2,
                                          max_tokens=s.answer_tokens)
-            path = eng.write_note(doc, "summary", "Summary", {"instructions": instructions}, summary, proc,
+            path = eng.write_note(doc, "summary", "Summary", {"instructions": instructions}, summary, proc, fname,
                                   intro=f"> **Instructions:** {instructions}")
             return FileResult(written_to=str(path), words=len(summary.split()), processing=proc)
 
-        args = {"instructions": instructions, "style": style, "char_range": _r(char_range)}
+        args = {"filename": fname, "instructions": instructions, "style": style, "char_range": _r(char_range)}
         result = await eng.job("summarise_to_file", name, args, work)
         eng.audit("summarise_to_file", {"name": name, **args}, result)
         return result
@@ -553,12 +586,14 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     @guard
     async def answer_to_file(
         name: DocName,
+        filename: Filename,
         question: Question,
         max_words: Annotated[int, Field(ge=50, le=2000, description="Upper bound on answer length.")] = 400,
         char_range: OptRange = None,
     ) -> FileResult:
         """Have the local model answer ONE specific question about the document (or a char_range
         of it) in a markdown note for the user. The answer is NOT returned; only its path and length."""
+        fname = note_filename(filename)
 
         async def work() -> FileResult:
             doc = await eng.load(name)
@@ -567,11 +602,11 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                     f"clearly if the text does not answer the question, and keep it under {max_words} words. Use markdown.")
             answer = await eng.llm.chat(SYSTEM_FREE, eng.final_prompt(text, proc, task), temperature=0.2,
                                         max_tokens=s.answer_tokens)
-            path = eng.write_note(doc, "answer", "Answer", {"question": question}, answer, proc,
+            path = eng.write_note(doc, "answer", "Answer", {"question": question}, answer, proc, fname,
                                   intro=f"> **Question:** {question}")
             return FileResult(written_to=str(path), words=len(answer.split()), processing=proc)
 
-        args = {"question": question, "max_words": max_words, "char_range": _r(char_range)}
+        args = {"filename": fname, "question": question, "max_words": max_words, "char_range": _r(char_range)}
         result = await eng.job("answer_to_file", name, args, work)
         eng.audit("answer_to_file", {"name": name, **args}, result)
         return result
@@ -580,6 +615,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     @guard
     async def assess(
         name: DocName,
+        filename: Filename,
         criterion: Annotated[str, Field(min_length=3, max_length=MAX_QUESTION_CHARS, description=(
             "ONE clearly defined criterion, e.g. 'clarity of the work plan in relation to the stated objectives'."))],
         min_score: Annotated[int, Field(ge=-100, le=100, description="Lowest score on the scale.")] = 1,
@@ -590,6 +626,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     ) -> AssessmentResult:
         """Have the local model rate the document (or a char_range of it) against one criterion
         on an integer scale. Returns ONLY the score; the justification goes to a markdown note."""
+        fname = note_filename(filename)
         if min_score >= max_score:
             raise ToolError("min_score must be lower than max_score.")
 
@@ -622,12 +659,12 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                 intro += f"\n>\n> **Rubric:** {rubric}"
             path = eng.write_note(doc, "assessment", "Justification",
                                   {"criterion": criterion, "score": score, "score_min": min_score,
-                                   "score_max": max_score, "rubric": rubric}, body, proc, intro=intro)
+                                   "score_max": max_score, "rubric": rubric}, body, proc, fname, intro=intro)
             return AssessmentResult(name=doc.name, score=score, min_score=min_score, max_score=max_score,
                                     written_to=str(path), processing=proc)
 
-        args = {"criterion": criterion, "min_score": min_score, "max_score": max_score, "rubric": rubric,
-                "char_range": _r(char_range)}
+        args = {"filename": fname, "criterion": criterion, "min_score": min_score, "max_score": max_score,
+                "rubric": rubric, "char_range": _r(char_range)}
         result = await eng.job("assess", name, args, work)
         eng.audit("assess", {"name": name, **args}, result)
         return result
@@ -637,13 +674,20 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
     async def extract_references(
         name: DocName,
         char_range: OptRange = None,
-        save_to_file: Annotated[bool, Field(description="Also write the list to a markdown note.")] = False,
+        save_to_file: Annotated[bool, Field(description="Also write the list to a markdown note; requires filename.")] = False,
+        filename: Annotated[str | None, Field(max_length=MAX_FILENAME_CHARS,
+                                              description=FILENAME_HELP + " Required if save_to_file is true.")] = None,
     ) -> ReferencesResult:
         """Extract the reference list (literature, web and other cited sources) of a document.
         Without char_range, the detected 'References'/'Bibliography' section(s) are scanned, or the
         whole document if none is found. The local model only locates entries by line number; the
         text is cut from the document, so it is verbatim. Note: this returns document text (the
         references) to the caller."""
+        fname = None
+        if save_to_file:
+            if not filename:
+                raise ToolError("filename is required when save_to_file is true.")
+            fname = note_filename(filename)
 
         async def work() -> ReferencesResult:
             doc = await eng.load(name)
@@ -701,16 +745,16 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                 name=doc.name, references=refs, web_links=web, scope=scope,
                 ranges=[CharRange(start=a, end=b) for a, b in spans], chunks=n_chunks, dropped_unverified=dropped,
             )
-            if save_to_file:
+            if fname:
                 body = [f"{i}. {r.text} `{r.kind}`" for i, r in enumerate(refs, 1)] or ["_None found._"]
                 body += ["", "## Web links", ""] + ([f"- <{u}>" for u in web] or ["_None found._"])
                 path = eng.write_note(doc, "references", "References",
                                       {"reference_count": len(refs), "web_link_count": len(web), "scope": scope},
-                                      "\n".join(body), None)
+                                      "\n".join(body), None, fname)
                 result.written_to = str(path)
             return result
 
-        args = {"char_range": _r(char_range), "save_to_file": save_to_file}
+        args = {"char_range": _r(char_range), "save_to_file": save_to_file, "filename": fname}
         result = await eng.job("extract_references", name, args, work)
         eng.audit("extract_references", {"name": name, **args}, result)
         return result

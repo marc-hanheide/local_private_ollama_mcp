@@ -37,6 +37,6 @@ async def test_skill_covers_every_tool_and_no_stale_ones(client):
 async def test_parameters_named_in_skill_exist(client):
     _, body = _parts()
     tools = {t.name: t for t in await client.list_tools()}
-    for param in ("char_range", "min_score", "max_score", "rubric", "instructions", "question", "save_to_file"):
+    for param in ("char_range", "min_score", "max_score", "rubric", "instructions", "question", "save_to_file", "filename"):
         assert f"`{param}" in body
         assert any(param in t.input_schema["properties"] for t in tools.values()), param
