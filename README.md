@@ -214,3 +214,35 @@ uv run --group dev ruff check src tests
 ```
 
 The test suite covers the table of contents, the hash-keyed cache, every tool through an in-memory MCP client, condensing within the context budget, reference verification, the Ollama client's error handling and retries, and an end-to-end run of the real stdio server against a fake Ollama HTTP endpoint. CI runs it on Python 3.10 to 3.13 on Linux and on macOS, and checks that `uv tool install` works.
+
+### Testing against a local Ollama in VS Code
+
+The [MCP Server Inspector](https://marketplace.visualstudio.com/items?itemName=co3moz.vsc-mcp-inspector) extension (`co3moz.vsc-mcp-inspector`) runs the real server over stdio and lets you call its tools from a form, with no Claude involved.
+
+1. Make sure Ollama is running and the model is pulled (`ollama pull gemma4:e4b`), and put a test PDF, markdown or text file in your documents folder, e.g. `~/local-llm/docs`.
+2. Install the extension, open the **MCP Inspector** view in the activity bar and click **Create New Connection**.
+3. Choose the **STDIO** transport and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Name | `local-llm-dev` |
+   | Command | `uv` |
+   | Arguments | `run local-private-ollama-mcp` |
+   | Working directory | `${workspaceFolder}` |
+
+   Running through `uv run` in the workspace folder uses your checked-out source, so edits take effect after a reconnect.
+4. Add these environment variables (values may use `${userHome}` and `${env:NAME}`):
+
+   | Variable | Value |
+   |---|---|
+   | `DOC_ROOT` | `${userHome}/local-llm/docs` |
+   | `OUTPUT_DIR` | `${userHome}/local-llm/out` |
+   | `OLLAMA_URL` | `http://127.0.0.1:11434` |
+   | `OLLAMA_MODEL` | `gemma4:e4b` |
+   | `OLLAMA_API_KEY` | only if your Ollama needs a token, e.g. `${env:OLLAMA_API_KEY}` |
+
+   Leave `OLLAMA_API_KEY` out for a plain local Ollama. The extension stores environment values in the OS keychain.
+5. Click **Test Connection**, then **Connect & Save**. Expand the connection, open `server_status` and press **Run Tool**. `ollama_reachable` and `model_available` should be `true` and `problems` empty; otherwise fix what it lists.
+6. Run `list_documents`, then `document_overview` with a file name, then the other tools (for example `yes_no` with a `char_range` from the overview). Notes are written to `OUTPUT_DIR`.
+
+If a connection fails, open the **MCP Inspector** output channel: it shows every JSON-RPC message and the server's stderr. Model calls can take longer than the extension's `mcpInspector.requestTimeout` (60 s by default); raise it in the settings for large documents. Use **Reconnect** from the connection's context menu after changing code or environment variables.

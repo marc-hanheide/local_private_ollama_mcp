@@ -396,6 +396,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
             problems.append(f"Output folder {s.output_dir} is not writable.")
         result = ServerStatus(
             ok=reachable and available and writable and s.doc_root.is_dir(),
+            server_version=__version__,
             ollama_url=s.ollama_url, ollama_reachable=reachable, ollama_version=version, model=s.model,
             model_available=available, auth_configured=bool(s.ollama_api_key), num_ctx=s.num_ctx,
             context_budget_chars=s.doc_budget_chars, doc_root=str(s.doc_root), documents=docs,

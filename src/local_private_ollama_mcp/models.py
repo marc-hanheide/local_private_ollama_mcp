@@ -81,6 +81,7 @@ class DocumentOverview(BaseModel):
 
 class ServerStatus(BaseModel):
     ok: bool = Field(description="True if Ollama is reachable, the model is available and the folders are usable.")
+    server_version: str = Field(description="Version of this MCP server.")
     ollama_url: str
     ollama_reachable: bool
     ollama_version: str | None
