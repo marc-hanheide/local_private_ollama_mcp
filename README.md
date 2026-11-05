@@ -35,11 +35,21 @@ uv tool install git+https://github.com/marc-hanheide/local_private_ollama_mcp
 
 This puts a `local-private-ollama-mcp` command on your PATH (usually in `~/.local/bin`). Upgrade later with `uv tool upgrade local-private-ollama-mcp`.
 
-Or run it without installing, always fetching the latest version:
+Or run it without installing:
 
 ```bash
 uvx --from git+https://github.com/marc-hanheide/local_private_ollama_mcp local-private-ollama-mcp
 ```
+
+### Getting the latest version with uvx
+
+uv caches the build of a Git source, so a plain `uvx` call keeps using the version it fetched first, even after new commits on GitHub. To pick up updates:
+
+- Add `--refresh` to re-check GitHub on every start, e.g. `uvx --refresh --from git+https://github.com/marc-hanheide/local_private_ollama_mcp local-private-ollama-mcp`. In a Claude Desktop config, put `"--refresh"` first in `args`. It adds a short delay at each start.
+- Or refresh once by clearing this package's cache: `uv cache clean local-private-ollama-mcp`; the next `uvx` call fetches the latest commit.
+- To stay on a fixed version instead, pin a commit hash (or a tag, once releases are tagged): `git+https://github.com/marc-hanheide/local_private_ollama_mcp@<commit>`. Change it to upgrade.
+
+The server reports its version in `server_status` (`server_version`), so you can check which one is running. Restart the MCP client after updating.
 
 Then put your PDFs, markdown and text files in the documents folder. By default this is `~/Downloads` (or `~/Download`); to use a dedicated folder instead, create it and set `DOC_ROOT`:
 
@@ -81,6 +91,22 @@ To run straight from GitHub instead of installing, use `uvx`:
   }
 }
 ```
+
+To run from a checked-out copy of the source, for development or to try local changes, use `uv run` with `--directory` pointing at the checkout:
+
+```json
+{
+  "mcpServers": {
+    "local-llm": {
+      "command": "/Users/you/.local/bin/uv",
+      "args": ["run", "--directory", "/Users/you/workspace/local_private_ollama_mcp", "local-private-ollama-mcp"],
+      "env": { "DOC_ROOT": "/Users/you/private-docs" }
+    }
+  }
+}
+```
+
+`uv run` builds the environment from the checkout's `uv.lock` on first start, so the first connection can be slow. Edits to the source take effect after restarting Claude Desktop. `--directory` also makes the checkout the server's working directory, so a `.env` file there is loaded (variables in `env` still take precedence). Find the path to `uv` with `which uv`.
 
 Leave out `OLLAMA_API_KEY` for a plain local Ollama. If you'd rather not keep a token in the config file, point `command` at a small wrapper script that reads it from your keychain, exports it, and then runs `local-private-ollama-mcp`.
 
