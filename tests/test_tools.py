@@ -35,6 +35,7 @@ def front_matter(path: str) -> dict:
 
 async def test_instructions_and_typed_schemas(client, server):
     assert "LOCAL language model" in client.instructions
+    assert "Condensing is the bottleneck" in client.instructions and "context_budget_chars" in client.instructions
     # Classic MCP clients (e.g. Claude Desktop) receive the same text on initialize.
     async with Client(server, mode="legacy") as legacy:
         assert "char_range" in legacy.initialize_result.instructions
@@ -112,6 +113,8 @@ async def test_large_document_is_condensed_within_context(client, docs, llm, set
     for c in llm.calls:
         doc_part = c.user.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
         assert len(doc_part) <= budget
+    notes = [c for c in llm.calls if c.system == SYSTEM_NOTES]
+    assert notes and all(c.max_tokens == settings.note_tokens <= settings.tokens_for_words(400) for c in notes)
     fm = front_matter(r["written_to"])
     assert fm["condensed"] is True and fm["score"] == 1 and fm["score_min"] == 1
     assert fm["tags"] == ["local-llm", "assessment"] and fm["source"] == "big.txt"

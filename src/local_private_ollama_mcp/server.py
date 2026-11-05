@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import references as refs_mod
-from .config import Settings, load_dotenv
+from .config import NOTE_WORDS, Settings, load_dotenv
 from .documents import Document, DocumentError, DocumentStore
 from .jobs import JobRunner, report_progress
 from .llm import LLM, LLMError, OllamaLLM
@@ -84,7 +84,7 @@ The task that will later be done on the whole text is: {focus}
 
 Write concise notes containing ONLY information from this part that is relevant to that task:
 facts, figures, claims, names of sections, and short verbatim quotes where exact wording matters.
-Do not perform the task itself and do not add opinions.
+Use under {words} words in total. Do not perform the task itself and do not add opinions.
 If nothing in this part is relevant, reply with exactly: NONE"""
 CONDENSED_NOTE = (
     "Note: the text was too long to read at once, so <document> contains task-focused notes "
@@ -107,10 +107,13 @@ access to this conversation. Use it only for clearly defined, single-step tasks:
 - One task per call: one specific question, one assessment criterion, one set of labels.
   Split compound or multi-part questions into separate calls.
 - Make every question self-contained and concrete; the local model cannot ask for clarification.
-- Start with document_overview. It returns the table of contents with a character range per
-  section. Pass the relevant section's range as char_range to the other tools whenever a task
-  concerns one part of the document: it is faster and much more accurate than processing the
-  whole document, which is split into chunks and condensed into notes, losing detail.
+- Condensing is the bottleneck. A text longer than one read (about {budget} characters; see
+  context_budget_chars and fits_in_context in document_overview) is split into chunks, and each chunk
+  needs its own slow local-model call before the actual task even starts: minutes instead of seconds,
+  and detail is lost. Always scope calls so they need no condensing. Start with document_overview, then
+  pass a section's range as char_range, choosing sections no longer than context_budget_chars (split
+  larger ones, or ask several scoped questions). Avoid whole-document calls on documents that do not
+  fit. Check processing.condensed in results.
 - Prefer the narrow tools (count_mentions, yes_no, classify) for checks and the *_to_file tools
   for anything needing prose. Results include a "processing" block; tell the user when
   condensed or truncated is true.
@@ -230,7 +233,7 @@ class Engine:
             notes = []
             for i, part in enumerate(parts, 1):
                 report_progress(f"condensing part {i} of {len(parts)}" + (f", round {rounds + 1}" if rounds else ""))
-                task = NOTES_TASK.format(i=i, n=len(parts), focus=focus)
+                task = NOTES_TASK.format(i=i, n=len(parts), focus=focus, words=NOTE_WORDS)
                 note = (await self.llm.chat(SYSTEM_NOTES, doc_prompt(part, task), max_tokens=self.s.note_tokens)).strip()
                 if note and note.strip(" .").upper() != "NONE":
                     notes.append(f"[Part {i}/{len(parts)}]\n{note}")
@@ -371,7 +374,8 @@ DocName = Annotated[str, Field(min_length=1, max_length=500,
                                description="Document file name as returned by list_documents.")]
 OptRange = Annotated[CharRange | None, Field(
     description="Optional [start, end) character range to restrict the task to, e.g. a section's "
-                "start and end from document_overview. Omit to use the whole document.")]
+                "start and end from document_overview. Prefer a range no longer than context_budget_chars: "
+                "longer text is condensed in many slow chunk calls. Omit to use the whole document.")]
 Question = Annotated[str, Field(min_length=3, max_length=MAX_QUESTION_CHARS,
                                 description="One specific, self-contained question.")]
 Label = Annotated[str, Field(min_length=1, max_length=60)]

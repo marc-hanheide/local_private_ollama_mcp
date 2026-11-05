@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+NOTE_WORDS = 400  # per chunk; notes are intermediate and must stay short whatever the context size
+
 
 def load_dotenv(path: Path | str = ".env") -> bool:
     """Load KEY=VALUE lines from `path` into os.environ, if the file exists.
@@ -96,7 +98,7 @@ class Settings:
 
     @property
     def note_tokens(self) -> int:
-        return max(256, self.num_ctx // 5)
+        return self.tokens_for_words(NOTE_WORDS)
 
     @property
     def answer_tokens(self) -> int:

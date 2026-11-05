@@ -182,6 +182,8 @@ The local model's output length follows the task, not the context window: the to
 
 The local model's context is small (8192 tokens by default, about 14,000 characters per read). Text that doesn't fit is split into overlapping chunks at paragraph boundaries, each chunk is condensed into notes relevant to the current task, and this repeats until the notes fit; the final step then runs on the notes. Results report this as `condensed: true`. Passing a `char_range` usually avoids it entirely.
 
+Condensing is the slow part: every chunk is a separate model call, so a long document can take minutes. Each note is capped at about 400 words. The server instructions therefore tell Claude to scope calls to sections that fit `context_budget_chars` (reported by `document_overview`) and to avoid whole-document calls on long documents.
+
 ### Reference extraction
 
 `extract_references` scans the detected "References", "Bibliography" or similar section(s), or a `char_range` you give, or the whole document if there is no such section.

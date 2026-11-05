@@ -46,6 +46,10 @@ The local model is far less capable than you, sees only what one tool call gives
 small context window (about 14,000 characters per read by default). It cannot ask questions.
 
 - One task per call: one question, one criterion, one set of labels. Split compound questions.
+- Scope every call. Text longer than one read (`context_budget_chars` in `document_overview`) is split
+  into chunks and condensed by many slow model calls before the real task starts: minutes instead of
+  seconds, with lost detail. Pass a section's `char_range` that fits `context_budget_chars` (split
+  bigger sections, or ask several scoped questions), and check `processing.condensed`.
 - Make each question self-contained and concrete: name the concept, the section and the
   standard you mean. "Does the work plan name a lead partner for every work package?" works;
   "Is the plan any good?" does not.
