@@ -131,6 +131,17 @@ async def test_assess_clamps_and_writes_justification(client, docs, llm):
                                           "min_score": 5, "max_score": 5})
 
 
+async def test_output_budget_follows_max_words_not_context(client, docs, settings, llm):
+    (docs / "p.md").write_text(DOC)
+    llm.handler = lambda c: json.dumps({"justification": "ok", "score": 3})
+    await client.call_tool("assess", {"name": "p.md", "filename": "a1", "criterion": "clarity", "max_words": 40})
+    await client.call_tool("assess", {"name": "p.md", "filename": "a2", "criterion": "clarity", "max_words": 1000})
+    small, large = llm.calls[-2].max_tokens, llm.calls[-1].max_tokens
+    assert small == settings.tokens_for_words(40) < large <= settings.answer_tokens
+    assert "under 40 words" in llm.calls[-2].user
+    assert settings.tokens_for_words(1000) == settings.answer_tokens  # never above the context-based cap
+
+
 async def test_answer_and_summary_notes(client, docs, settings):
     (docs / "p.md").write_text(DOC)
     a = (await client.call_tool("answer_to_file", {"name": "p.md", "filename": "p-wp1-answer.md",

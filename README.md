@@ -159,12 +159,14 @@ A test checks that the skill mentions every tool the server offers and no tools 
 | `count_mentions(name, term, char_range?)` | A count (regex, no LLM) |
 | `yes_no(name, question, char_range?)` | `yes`/`no`/`unclear` and a confidence |
 | `classify(name, labels, char_range?)` | One label from the 2 to 20 you gave |
-| `summarise_to_file(name, filename, instructions, style, char_range?)` | Path and word count; the summary stays on disk |
+| `summarise_to_file(name, filename, instructions, style, max_words, char_range?)` | Path and word count; the summary stays on disk |
 | `answer_to_file(name, filename, question, max_words, char_range?)` | Path and word count; the answer stays on disk |
-| `assess(name, filename, criterion, min_score, max_score, rubric, char_range?)` | The integer score; the justification stays on disk |
+| `assess(name, filename, criterion, min_score, max_score, rubric, max_words, char_range?)` | The integer score; the justification stays on disk |
 | `extract_references(name, char_range?, save_to_file, filename?)` | The references with their kind, web links, and what was scanned |
 
 All model-backed tools also return a `processing` block: the character range used, the number of chunks, and whether the text had to be condensed or truncated.
+
+The local model's output length follows the task, not the context window: the tools that write prose take a `max_words` limit (justification 150, summary 300, answer 400 by default), which goes into the prompt and caps the output tokens, so a large `NUM_CTX` does not make answers longer or slower.
 
 ### Table of contents and character ranges
 

@@ -561,6 +561,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                                            description="Short, specific instructions, e.g. 'Summarise the methodology'.")]
         = "Summarise the key points.",
         style: Annotated[Literal["bullets", "prose"], Field(description="Output style.")] = "bullets",
+        max_words: Annotated[int, Field(ge=50, le=2000, description="Upper bound on summary length.")] = 300,
         char_range: OptRange = None,
     ) -> FileResult:
         """Have the local model write a summary of the document (or a char_range of it) to a
@@ -570,14 +571,16 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
         async def work() -> FileResult:
             doc = await eng.load(name)
             text, proc = await eng.prepare(doc, char_range, instructions)
-            task = f"{instructions}\nWrite the result as {'concise bullet points' if style == 'bullets' else 'short prose'}."
+            task = (f"{instructions}\nWrite the result as {'concise bullet points' if style == 'bullets' else 'short prose'}, "
+                    f"under {max_words} words.")
             summary = await eng.llm.chat(SYSTEM_FREE, eng.final_prompt(text, proc, task), temperature=0.2,
-                                         max_tokens=s.answer_tokens)
+                                         max_tokens=s.tokens_for_words(max_words))
             path = eng.write_note(doc, "summary", "Summary", {"instructions": instructions}, summary, proc, fname,
                                   intro=f"> **Instructions:** {instructions}")
             return FileResult(written_to=str(path), words=len(summary.split()), processing=proc)
 
-        args = {"filename": fname, "instructions": instructions, "style": style, "char_range": _r(char_range)}
+        args = {"filename": fname, "instructions": instructions, "style": style, "max_words": max_words,
+                "char_range": _r(char_range)}
         result = await eng.job("summarise_to_file", name, args, work)
         eng.audit("summarise_to_file", {"name": name, **args}, result)
         return result
@@ -601,7 +604,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
             task = (f"Question: {question}\n\nAnswer using only the text. Refer to the relevant sections, say "
                     f"clearly if the text does not answer the question, and keep it under {max_words} words. Use markdown.")
             answer = await eng.llm.chat(SYSTEM_FREE, eng.final_prompt(text, proc, task), temperature=0.2,
-                                        max_tokens=s.answer_tokens)
+                                        max_tokens=s.tokens_for_words(max_words))
             path = eng.write_note(doc, "answer", "Answer", {"question": question}, answer, proc, fname,
                                   intro=f"> **Question:** {question}")
             return FileResult(written_to=str(path), words=len(answer.split()), processing=proc)
@@ -622,6 +625,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
         max_score: Annotated[int, Field(ge=-100, le=100, description="Highest score on the scale.")] = 10,
         rubric: Annotated[str, Field(max_length=2 * MAX_QUESTION_CHARS,
                                      description="Optional description of what low and high scores mean.")] = "",
+        max_words: Annotated[int, Field(ge=30, le=1000, description="Upper bound on justification length.")] = 150,
         char_range: OptRange = None,
     ) -> AssessmentResult:
         """Have the local model rate the document (or a char_range of it) against one criterion
@@ -643,9 +647,10 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                     f"Use an integer score from {min_score} (lowest) to {max_score} (highest).\n"
                     + (f"Rubric: {rubric}\n" if rubric else "")
                     + "First write a justification in markdown that cites specific evidence from the text, "
-                      "covering strengths and weaknesses, then give the score.")
+                      f"covering strengths and weaknesses, in under {max_words} words (terse points, do not "
+                      "restate the text), then give the score.")
             out = parse_json(await eng.llm.chat(SYSTEM, eng.final_prompt(text, proc, task), schema=schema,
-                                                max_tokens=s.answer_tokens))
+                                                max_tokens=s.tokens_for_words(max_words)))
             try:
                 raw = int(out["score"])
             except (KeyError, TypeError, ValueError) as e:
@@ -664,7 +669,7 @@ def create_server(settings: Settings | None = None, llm: LLM | None = None,
                                     written_to=str(path), processing=proc)
 
         args = {"filename": fname, "criterion": criterion, "min_score": min_score, "max_score": max_score,
-                "rubric": rubric, "char_range": _r(char_range)}
+                "rubric": rubric, "max_words": max_words, "char_range": _r(char_range)}
         result = await eng.job("assess", name, args, work)
         eng.audit("assess", {"name": name, **args}, result)
         return result

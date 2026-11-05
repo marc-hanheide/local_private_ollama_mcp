@@ -102,6 +102,10 @@ class Settings:
     def answer_tokens(self) -> int:
         return max(512, self.num_ctx // 3)
 
+    def tokens_for_words(self, words: int) -> int:
+        """Output cap for an answer of about `words` words; the headroom keeps JSON replies from being cut off."""
+        return min(self.answer_tokens, 2 * words + 128)
+
     @property
     def ref_chunk_chars(self) -> int:
         """Reference extraction returns only line numbers, so input can use ~50% of the window."""

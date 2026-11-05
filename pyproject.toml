@@ -1,6 +1,6 @@
 [project]
 name = "local-private-ollama-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Narrow, privacy-preserving MCP server that lets Claude delegate document questions to a local Ollama model."
 readme = "README.md"
 authors = [{ name = "Marc Hanheide", email = "marc@hanheide.net" }]
